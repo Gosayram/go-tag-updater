@@ -9,6 +9,7 @@ import (
 	gitlab "gitlab.com/gitlab-org/api/client-go"
 )
 
+// Constants for testing
 const (
 	// Branch test constants
 	TestBranchName          = "feature/test-branch"
