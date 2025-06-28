@@ -5,8 +5,8 @@ BINARY_NAME := go-tag-updater
 OUTPUT_DIR := bin
 CMD_DIR := cmd/go-tag-updater
 
-TAG_NAME ?= $(shell head -n 1 .release-version 2>/dev/null || echo "v0.1.0")
-VERSION ?= $(shell head -n 1 .release-version 2>/dev/null | sed 's/^v//' || echo "dev")
+TAG_NAME ?= $(shell head -n 1 .release-version 2>/dev/null | sed 's/^/v/' || echo "v1.0.0")
+VERSION ?= $(shell head -n 1 .release-version 2>/dev/null || echo "1.0.0")
 BUILD_INFO ?= $(shell date +%s)
 GOOS ?= $(shell go env GOOS)
 GOARCH ?= $(shell go env GOARCH)
@@ -51,7 +51,7 @@ SYFT_CYCLONEDX_FILE := sbom.cyclonedx.json
 # Build flags
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 DATE ?= $(shell date -u '+%Y-%m-%d_%H:%M:%S')
-BUILT_BY ?= $(shell git remote get-url origin 2>/dev/null | sed -n 's/.*[:/]\([^/]*\)\/[^/]*\.git.*/\1/p' || git config user.name 2>/dev/null | tr ' ' '_' || echo "unknown")
+BUILT_BY ?= $(shell git remote get-url origin 2>/dev/null | sed -n 's/.*[:/]\([^/]*\)\/[^/]*\.git.*/\1/p' || git config user.name 2>/dev/null | tr ' ' '_' || echo "local")
 
 # Build flags for Go
 BUILD_FLAGS=-buildvcs=false
@@ -674,21 +674,21 @@ version:
 	@echo "Build info: $(BUILD_INFO)"
 
 bump-patch:
-	@if [ ! -f .release-version ]; then echo "0.1.0" > .release-version; fi
+	@if [ ! -f .release-version ]; then echo "1.0.0" > .release-version; fi
 	@current=$$(cat .release-version); \
 	new=$$(echo $$current | awk -F. '{$$3=$$3+1; print $$1"."$$2"."$$3}'); \
 	echo $$new > .release-version; \
 	echo "Version bumped from $$current to $$new"
 
 bump-minor:
-	@if [ ! -f .release-version ]; then echo "0.1.0" > .release-version; fi
+	@if [ ! -f .release-version ]; then echo "1.0.0" > .release-version; fi
 	@current=$$(cat .release-version); \
 	new=$$(echo $$current | awk -F. '{$$2=$$2+1; $$3=0; print $$1"."$$2"."$$3}'); \
 	echo $$new > .release-version; \
 	echo "Version bumped from $$current to $$new"
 
 bump-major:
-	@if [ ! -f .release-version ]; then echo "0.1.0" > .release-version; fi
+	@if [ ! -f .release-version ]; then echo "1.0.0" > .release-version; fi
 	@current=$$(cat .release-version); \
 	new=$$(echo $$current | awk -F. '{$$1=$$1+1; $$2=0; $$3=0; print $$1"."$$2"."$$3}'); \
 	echo $$new > .release-version; \
@@ -738,4 +738,21 @@ clean-coverage:
 clean-all: clean clean-deps
 	@echo "Deep cleaning everything including dependencies..."
 	go clean -modcache
-	@echo "Deep cleanup completed" 
+	@echo "Deep cleanup completed"
+
+# Test data validation targets (for CI)
+.PHONY: test-data-check
+
+test-data-check:
+	@echo "Running fast test data validation (CI optimized)..."
+	@if [ -d testdata ]; then \
+		find testdata -name "*.yaml" -o -name "*.yml" | head -10 | while read file; do \
+			echo "Checking $$file..."; \
+			if ! cat "$$file" | grep -q "^[[:space:]]*[a-zA-Z]"; then \
+				echo "Warning: $$file appears to be empty or malformed"; \
+			fi; \
+		done; \
+		echo "✓ Test data validation completed"; \
+	else \
+		echo "No testdata directory found, skipping validation"; \
+	fi 

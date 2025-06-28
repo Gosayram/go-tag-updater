@@ -2,17 +2,18 @@
 
 ## Project Overview
 
-A Go CLI tool for safely updating YAML files in GitLab repositories through automated merge request workflows. The tool provides intelligent conflict detection, flexible project identification, comprehensive merge request lifecycle management, and built-in version tracking.
+A Go CLI tool for safely updating YAML files in GitLab repositories through automated merge request workflows. The tool provides intelligent conflict detection, flexible project identification, comprehensive merge request lifecycle management, and built-in version tracking using the official GitLab Go API client library.
 
 ## Core Objectives
 
 - Update YAML files in GitLab repositories with new tag values
-- Create and manage merge requests automatically
+- Create and manage merge requests automatically through GitLab API
 - Implement safe merging with conflict detection and prevention
 - Support both numeric project IDs and human-readable project paths
 - Provide comprehensive debugging and logging capabilities
 - Maintain secure path handling for file operations
 - Display version information with build-time metadata
+- Leverage official GitLab Go client for reliable API integration
 
 ## Key Features
 
@@ -26,7 +27,8 @@ Built-in version tracking with comprehensive build metadata:
 
 Example output:
 ```
-go-tag-updater 1.0.0 (7488953) built 2025-06-25 22:40:38 by Gosayram with go1.24.4 for darwin/arm64
+go-tag-updater v1.0.0 (build 1) (7488953)
+built 2025-01-25 12:30:45 by Gosayram with go1.24.4 for darwin/arm64
 ```
 
 ### 2. Flexible Project Identification
@@ -68,6 +70,16 @@ Before creating new merge requests, the tool performs safety checks:
 - Comprehensive error handling with actionable messages
 - **Path traversal protection**: Validates file paths to prevent `../` attacks
 - **Secure file operations**: All file reads/writes are validated and sanitized
+
+### 6. Dry Run Mode
+
+Preview functionality without making actual changes:
+
+- Validates file existence and accessibility
+- Shows YAML content changes
+- Generates branch names and commit messages
+- Previews merge request creation
+- No actual GitLab operations performed
 
 ## CLI Interface
 
@@ -132,6 +144,16 @@ go-tag-updater \
   --token=$GITLAB_TOKEN
 ```
 
+#### Dry Run Preview
+```bash
+go-tag-updater \
+  --project-id=mygroup/myproject \
+  --file=k8s/deployment.yaml \
+  --new-tag=v2.0.0 \
+  --dry-run \
+  --token=$GITLAB_TOKEN
+```
+
 ## Architecture Design
 
 ### Package Structure
@@ -140,7 +162,7 @@ go-tag-updater \
 go-tag-updater/
 ├── cmd/
 │   └── go-tag-updater/
-│       ├── main.go          # Application entry point
+│       ├── main.go          # Application entry point with exit codes
 │       └── root.go          # CLI command definitions and flag parsing
 ├── internal/
 │   ├── version/
@@ -166,11 +188,12 @@ go-tag-updater/
 │   │   ├── simple_workflow.go     # Main workflow orchestration
 │   │   └── simple_workflow_test.go # ✅ Workflow orchestration tests
 │   ├── logger/
-│   │   └── debug.go         # Debugging and logging utilities
+│   │   ├── debug.go         # Debugging and logging utilities
+│   │   └── debug_test.go    # ✅ Logger tests
 │   └── git/                 # Git operations (reserved for future use)
 ├── pkg/
 │   └── errors/
-│       └── types.go         # Custom error types
+│       └── types.go         # Custom error types with specific codes
 ├── docs/
 │   └── ARCHITECTURE.md      # Detailed architecture documentation
 ├── scripts/
@@ -179,7 +202,7 @@ go-tag-updater/
 ├── Makefile                 # Build automation and quality checks
 ├── go.mod                   # Go module definition
 ├── go.sum                   # Go module checksums
-├── .golangci.yml           # Linter configuration
+├── .golangci.yml           # Linter configuration with staticcheck
 ├── .gosec.json             # Security scanner configuration
 ├── .errcheck_excludes.txt  # Error check exclusions
 └── IDEA.md                 # This file
@@ -192,38 +215,57 @@ go-tag-updater/
 **Constants:**
 ```go
 const (
-    DefaultVersion = "dev"
-    DefaultCommit = "unknown"
-    DefaultDate = "unknown"
-    DefaultBuiltBy = "unknown"
+    ShortCommitHashLength = 7
+    UnknownValue = "unknown"
+)
+```
+
+**Build Variables:**
+```go
+var (
+    Version     = "dev"
+    Commit      = "unknown"
+    Date        = "unknown"
+    BuiltBy     = "unknown"
+    BuildNumber = "0"
 )
 ```
 
 **Responsibilities:**
-- Version information display
-- Build metadata management
-- Runtime environment details
-- CLI version flag handling
+- Version information display with build metadata
+- Build-time variable management via linker flags
+- Runtime environment details (Go version, platform)
+- CLI version flag handling with formatted output
 
 #### 2. GitLab Client (`internal/gitlab/`)
 
 **Constants:**
 ```go
 const (
-    DefaultAPIVersion = "v4"
-    ProjectsEndpoint = "/api/v4/projects"
-    MergeRequestsEndpoint = "/api/v4/projects/%d/merge_requests"
+    DefaultBranchPrefix = "feature/"
+    UpdateBranchPrefix  = "update-tag/"
+    MaxBranchNameLength = 100
+    MinBranchNameLength = 1
+    DefaultBranch = "main"
     DefaultTimeout = 30 * time.Second
     MaxRetryAttempts = 3
 )
 ```
 
+**Components:**
+- **Client**: Wrapper around official GitLab Go client
+- **FileManager**: Repository file CRUD operations
+- **BranchManager**: Git branch lifecycle management
+- **SimpleMergeRequestManager**: Basic MR operations
+- **Project resolution**: Supports both numeric IDs and paths
+
 **Responsibilities:**
-- Project ID resolution from paths
+- Project ID resolution from paths using GitLab API
 - Merge request creation and management
-- API authentication and rate limiting
+- API authentication and health checks
+- File operations with Base64 encoding/decoding
+- Branch creation, validation, and cleanup
 - Conflict detection and prevention
-- Branch and file operations
 
 #### 3. YAML Processor (`internal/yaml/`)
 
@@ -241,7 +283,7 @@ const (
 - YAML file parsing and validation
 - Tag value updates with preservation of formatting
 - Backup creation and restoration
-- Syntax validation
+- Syntax validation before and after updates
 - **Secure path validation** to prevent directory traversal attacks
 
 #### 4. Workflow Orchestration (`internal/workflow/`)
@@ -249,122 +291,147 @@ const (
 **Constants:**
 ```go
 const (
-    DefaultWorkflowTimeout = 300 * time.Second
-    MaxConcurrentOperations = 5
-    RetryBackoffDuration = 2 * time.Second
+    PreviewContentMaxLength = 500
+    TempFilePermissions = 0o600
 )
 ```
+
+**SimpleTagUpdater Components:**
+- File existence validation
+- YAML content processing with temporary files
+- Branch name generation (auto or custom)
+- Dry-run mode with content preview
+- Complete workflow execution with cleanup
 
 **Responsibilities:**
 - Main workflow execution and coordination
 - Step-by-step process management
-- Error handling and recovery
+- Error handling and recovery with rollback
 - Progress tracking and reporting
+- Dry-run functionality for testing
 
 #### 5. Configuration Management (`internal/config/`)
 
 **Constants:**
 ```go
 const (
-    DefaultConfigFile = ".go-tag-updater.yaml"
+    DefaultConfigFile = "go-tag-updater.yaml"
+    AlternateConfigFile = "go-tag-updater.yml"
     EnvPrefix = "GO_TAG_UPDATER"
     DefaultMergeTimeout = 300 * time.Second
-    MinTokenLength = 10
+    DefaultTimeout = 30 * time.Second
+    DefaultRateLimitRPS = 10
+    DefaultMaxConcurrentReqs = 5
+    DefaultRetryCount = 3
 )
 ```
 
+**Configuration Types:**
+- **Config**: File-based configuration with YAML support
+- **CLIConfig**: Command-line specific configuration
+- **GitLabConfig**: GitLab API specific settings
+- **PerformanceConfig**: Rate limiting and timeouts
+
 **Responsibilities:**
-- CLI flag parsing and validation
-- Environment variable support
-- Configuration file loading
+- CLI flag parsing and validation with Cobra/Viper
+- Environment variable support with prefix
+- Configuration file loading (YAML)
 - Default value management
 - Input sanitization and security checks
 
-## Security Features
+#### 6. Logging (`internal/logger/`)
 
-### Path Traversal Protection
+**Responsibilities:**
+- Structured logging with configurable debug mode
+- Operation tracking with context fields
+- Error logging with stack traces
+- GitLab API request/response logging in debug mode
 
-The tool implements comprehensive security measures for file operations:
+## GitLab API Integration
 
-- **Path validation**: All file paths are validated to prevent `../` directory traversal attacks
-- **Absolute path restrictions**: Limits absolute paths to safe system directories
-- **Path normalization**: Cleans and normalizes file paths before operations
-- **Safe file operations**: All read/write operations are protected with validation
+### Official Client Library
 
-### Security Implementation
+The application uses the official GitLab Go client library:
+- **Library**: `gitlab.com/gitlab-org/api/client-go v0.130.1`: Official GitLab API client
+- **Version**: v0.130.1
+- **Features**: Full GitLab REST API v4 support
 
-```go
-const (
-    MaxPathLength = 4096
-    ForbiddenPathPattern = `\.\.`
-    SafeDirectoryPrefixes = []string{"/tmp", "/var/tmp"}
-)
+### API Services Used
 
-// File operations include security validation
-func validateAndCleanFilePath(filePath string) (string, error) {
-    // Security validation logic
-    // Path normalization
-    // Directory traversal prevention
-}
-```
+1. **Projects Service**: Project information and path resolution
+2. **RepositoryFiles Service**: File CRUD operations with Base64 handling
+3. **Branches Service**: Branch management and validation
+4. **MergeRequests Service**: MR lifecycle operations
+5. **Users Service**: Authentication health checks
+
+### Security Features
+
+- Token-based authentication
+- Configurable GitLab instance URL
+- Health check validation
+- Rate limiting awareness
+- Secure error handling without information disclosure
 
 ## Implementation Status
 
 ### Completed Features ✅
-- ✅ CLI framework with Cobra
-- ✅ GitLab API client implementation  
-- ✅ YAML processing with security
-- ✅ Project resolution (ID and path)
+- ✅ CLI framework with Cobra and Viper
+- ✅ GitLab API client implementation with official library
+- ✅ YAML processing with security validation
+- ✅ Project resolution (ID and path) via GitLab API
 - ✅ Merge request lifecycle management
+- ✅ Branch creation and management with validation
+- ✅ File operations with Base64 encoding/decoding
 - ✅ Conflict detection and prevention
 - ✅ Debug mode and comprehensive logging
 - ✅ Version information with build metadata
 - ✅ Security hardening with path validation
+- ✅ Dry-run mode for safe testing
 - ✅ Complete build system with quality checks
-- ✅ **Comprehensive test coverage for GitLab package**
-- ✅ **Unit tests for version management**
-- ✅ **YAML processing tests with security validation**
-- ✅ **Workflow orchestration tests**
-- ✅ **Performance benchmarking for all critical operations**
+- ✅ **Comprehensive test coverage** for critical components
+- ✅ **Unit tests** for version, workflow, GitLab packages
+- ✅ **Performance benchmarking** for all critical operations
+- ✅ **Security scanning** with gosec and govulncheck
+- ✅ **SBOM generation** for supply chain security
 
 ### Architecture Phases
 
 #### Phase 1: Core Infrastructure ✅
-- CLI framework setup with cobra
-- GitLab API client implementation
+- CLI framework setup with Cobra/Viper
+- GitLab API client implementation with official library
 - Basic YAML processing capabilities
-- Version management system
+- Version management system with build metadata
 
 #### Phase 2: Project Resolution ✅  
-- Numeric ID handling
+- Numeric ID handling via GitLab API
 - Human-readable path resolution
-- API endpoint construction
+- API endpoint construction and validation
 - Error handling for invalid projects
 
 #### Phase 3: Merge Request Management ✅
 - MR creation and lifecycle management
-- Conflict detection implementation
-- Wait logic for pending merge requests
+- Branch operations with validation
+- File operations with Base64 handling
 - Status monitoring and reporting
 
 #### Phase 4: Safety and Validation ✅
-- YAML syntax validation
-- File backup and restoration
+- YAML syntax validation with proper parsing
+- Temporary file handling with secure permissions
 - Atomic operations implementation
-- Comprehensive error handling
+- Comprehensive error handling with cleanup
 - **Security hardening with path validation**
 
 #### Phase 5: Advanced Features ✅
-- Debug mode implementation
-- Dry-run capabilities
-- Auto-merge functionality
-- Version information display
-- Performance optimization
+- Debug mode implementation with API logging
+- Dry-run capabilities with content preview
+- Auto-merge functionality (configuration)
+- Version information display with build details
+- Performance optimization and benchmarking
 
 #### Phase 6: Comprehensive Testing ✅
 - Unit test implementation for all core packages
-- Security vulnerability testing
-- Performance benchmarking
+- Security vulnerability testing with gosec
+- Performance benchmarking with time constraints
 - Error condition validation
 - Table-driven test patterns with zero magic numbers
 
@@ -380,6 +447,9 @@ const (
     ErrCodeAPITimeout = 1005
     ErrCodeSecurityViolation = 1006
     ErrCodePathTraversal = 1007
+    ErrCodeGitOperation = 1008
+    ErrCodeBranchOperation = 1009
+    ErrCodeMergeRequestOperation = 1010
 )
 ```
 
@@ -390,6 +460,7 @@ const (
 - **Security Errors**: Path traversal attempts, unauthorized file access
 - **Validation Errors**: YAML syntax, tag format, project existence
 - **Workflow Errors**: Process failures, timeout conditions
+- **Git Errors**: Branch operations, merge conflicts
 
 ## Testing Strategy
 
@@ -401,13 +472,14 @@ const (
 - ✅ Performance benchmarking for all critical operations
 
 ### Test Coverage Status
-- ✅ **GitLab Package**: Comprehensive test coverage (31.2% of statements)
+- ✅ **GitLab Package**: Comprehensive test coverage
   - ✅ `client.go`: Client creation, configuration, timeout handling
   - ✅ `projects.go`: Project validation, path resolution, security checks
   - ✅ `branches.go`: Branch validation, name generation, operations
 - ✅ **Version Package**: Complete version management testing
 - ✅ **YAML Package**: YAML processing and security validation
 - ✅ **Workflow Package**: Workflow orchestration and error handling
+- ✅ **Logger Package**: Debug logging and structured output
 
 ### Integration Tests
 - GitLab API interaction testing (requires real GitLab instance)
@@ -432,13 +504,16 @@ All tests follow strict quality standards:
 ### Test Constants
 ```go
 const (
-    TestProjectID = 123456
-    TestProjectPath = "test/group/project"
-    TestTimeout = 5 * time.Second
+    TestProjectID = "test/project"
+    TestGitLabToken = "test-token"
+    TestGitLabURL = "https://gitlab.example.com"
+    TestFilePath = "deployment.yaml"
+    TestNewTag = "v1.2.3"
+    TestOldTag = "v1.0.0"
+    TestTargetBranch = "main"
+    TestBranchName = "update-tag/v1.2.3"
+    TestTimeout = 5000 // milliseconds
     MaxTestRetries = 3
-    TestSecureDirectory = "/tmp/go-tag-updater-test"
-    TestGitLabToken = "test-token-12345"
-    TestBranchName = "feature/test-branch"
 )
 ```
 
@@ -447,11 +522,12 @@ const (
 - Secure token handling with environment variable support
 - Input validation and sanitization
 - **Path traversal protection for all file operations**
-- Temporary file cleanup
+- Temporary file cleanup with secure permissions
 - Rate limiting compliance
 - Audit logging for sensitive operations
 - Build-time security scanning with gosec
-- Dependency vulnerability checking
+- Dependency vulnerability checking with govulncheck
+- SBOM generation for supply chain security
 
 ## Performance Requirements
 
@@ -465,12 +541,14 @@ const (
 
 The project maintains high quality standards through:
 
-- **Linting**: golangci-lint with comprehensive rule set
+- **Linting**: golangci-lint with comprehensive rule set including staticcheck
 - **Security Scanning**: gosec for vulnerability detection
-- **Static Analysis**: staticcheck for code quality
+- **Static Analysis**: staticcheck for code quality and performance
 - **Error Checking**: errcheck for unhandled errors
 - **Vulnerability Scanning**: govulncheck for dependency issues
 - **SBOM Generation**: Software Bill of Materials tracking
+- **Coverage Analysis**: Test coverage reporting with HTML output
+- **Benchmarking**: Performance validation for critical paths
 
 ## Monitoring and Observability
 
@@ -481,73 +559,75 @@ The project maintains high quality standards through:
 - Debug mode with comprehensive request/response logging
 - Security event logging and monitoring
 
+## Dependencies
+
+### Core Dependencies
+- `gitlab.com/gitlab-org/api/client-go v0.130.1`: Official GitLab API client
+- `github.com/spf13/cobra v1.9.1`: CLI framework
+- `github.com/spf13/viper v1.20.1`: Configuration management
+- `github.com/sirupsen/logrus v1.9.3`: Structured logging
+- `gopkg.in/yaml.v3 v3.0.1`: YAML processing
+
+### Development Dependencies
+- Build and quality tools via Makefile
+- Security scanners (gosec, govulncheck)
+- Linters (golangci-lint with staticcheck)
+- SBOM generation (syft)
+
+## Build System
+
+### Makefile Targets
+- **Building**: `build`, `build-cross`, `build-debug`
+- **Testing**: `test`, `test-coverage`, `benchmark`
+- **Quality**: `lint`, `staticcheck`, `security-scan`, `vuln-check`
+- **Packaging**: `package-rpm`, `package-deb`, `package-tarball`
+- **Documentation**: `docs`, `sbom-generate`
+
+### Version Management
+- Build-time version injection via linker flags
+- Git commit hash and build date embedding
+- Semantic versioning support with bump commands
+
 ## Future Enhancements
 
-### Next Priority: Complete Test Coverage
+### Next Priority: Enhanced YAML Processing
 
-**Remaining files requiring comprehensive test coverage:**
+**Remaining improvements:**
 
-#### High Priority (Core Business Logic)
-1. **`internal/config/config.go`** - Configuration management and validation
-   - CLI flag parsing and validation tests
-   - Environment variable support tests  
-   - Configuration file loading tests
-   - Input sanitization and security validation
-   - Default value management tests
+#### High Priority (Core Features)
+1. **Advanced YAML Parsing**: Replace simple string replacement with proper YAML tree manipulation
+2. **Multiple Tag Support**: Update multiple tags in single operation
+3. **Complex YAML Structures**: Handle nested tags and arrays
+4. **YAML Validation**: Enhanced syntax and structure validation
 
-2. **`internal/gitlab/conflicts.go`** - Conflict detection logic
-   - Merge request conflict detection tests
-   - Branch conflict validation tests
-   - File-level conflict checking tests
-   - Conflict resolution strategy tests
+#### Medium Priority (Workflow Enhancements)
+1. **Pipeline Integration**: Monitor and wait for CI/CD pipelines
+2. **Auto-merge Logic**: Implement smart auto-merge with conditions
+3. **Conflict Resolution**: Handle merge conflicts automatically
+4. **Batch Operations**: Support multiple files and projects simultaneously
 
-3. **`internal/gitlab/files.go`** - File operations in GitLab
-   - File read/write operation tests
-   - Path validation and security tests
-   - File content modification tests
-   - Backup and restoration tests
+#### Lower Priority (Advanced Features)
+1. **Webhook Integration**: Trigger updates via webhooks
+2. **Approval Workflows**: Integration with GitLab approval rules
+3. **Audit Logging**: Comprehensive audit trail
+4. **Metrics and Monitoring**: Prometheus metrics
+5. **High Availability**: Support for multiple GitLab instances
 
-#### Medium Priority (Infrastructure)
-4. **`internal/gitlab/merge_requests_simple.go`** - MR lifecycle management
-   - Merge request creation tests
-   - Status monitoring tests
-   - Lifecycle management tests
-   - API interaction validation
+### Implementation Guidelines
 
-5. **`internal/yaml/parser.go`** - YAML file parsing and validation
-   - YAML syntax validation tests
-   - File format detection tests
-   - Parse error handling tests
-   - Structure validation tests
-
-#### Lower Priority (Utilities)
-6. **`internal/logger/debug.go`** - Debugging and logging utilities
-   - Log level management tests
-   - Output formatting tests
-   - Debug mode functionality tests
-
-### Testing Implementation Guidelines
-
-All new tests must follow established patterns:
+All new features must follow established patterns:
 - **Zero magic numbers**: All numeric literals as named constants
-- **Table-driven tests**: Comprehensive test case coverage
-- **Benchmark tests**: Performance validation for critical operations
-- **Security focus**: Path traversal, input validation, sanitization
+- **Comprehensive testing**: Unit tests, benchmarks, security validation
+- **Official GitLab API**: Use official client library features
+- **Security focus**: Path validation, input sanitization
 - **English-only documentation**: Professional, clear comments
-- **Error handling**: Comprehensive validation of error conditions
+- **Error handling**: Structured error types with specific codes
 
-### Expected Test Coverage Goals
-- **Target overall coverage**: 80%+ of statements
-- **Critical path coverage**: 95%+ for security-sensitive operations
-- **Performance benchmarks**: All operations under specified time limits
-- **Security validation**: 100% coverage for input validation functions
+### Expected Enhancement Goals
+- **YAML Processing**: 100% compatibility with YAML 1.2 specification
+- **Performance**: Sub-second response for typical operations
+- **Reliability**: 99.9% success rate for valid operations
+- **Security**: Zero security vulnerabilities in static analysis
+- **Maintainability**: 90%+ test coverage for all new features
 
-### Additional Future Enhancements
-- Batch processing for multiple files
-- Configuration file templates
-- Integration with CI/CD pipelines
-- Rollback capabilities for failed operations
-- Advanced conflict resolution strategies
-- Support for additional file formats beyond YAML
-- Enhanced security features and audit trails
-- Performance optimizations for large repositories 
+The architecture provides a solid foundation for these enhancements while maintaining backward compatibility and following Go best practices. 
