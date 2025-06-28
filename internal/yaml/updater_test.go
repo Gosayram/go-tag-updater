@@ -297,6 +297,14 @@ func TestPathTraversalSecurity(t *testing.T) {
 		"./../../etc/passwd",
 		"config/../../../etc/passwd",
 		"test/../../../../../../etc/passwd",
+		"/usr/bin/bash",
+		"/bin/sh",
+		"/sbin/init",
+		"\\windows\\system32\\drivers\\etc\\hosts",
+		"C:\\Windows\\System32\\config\\SAM",
+		"/Program Files/malicious.exe",
+		"etc/passwd",         // relative path to etc
+		"usr/local/bin/test", // relative path to usr
 	}
 
 	for _, maliciousPath := range maliciousPaths {
@@ -311,6 +319,32 @@ func TestPathTraversalSecurity(t *testing.T) {
 			exists := updater.fileExists(maliciousPath)
 			if exists {
 				t.Errorf("fileExists(%q) should return false for malicious path", maliciousPath)
+			}
+		})
+	}
+}
+
+func TestPathSecurityAllowedPaths(t *testing.T) {
+	updater := NewUpdater()
+
+	// Test paths that should be allowed
+	allowedPaths := []string{
+		"config.yaml",
+		"./config.yaml",
+		"configs/app.yaml",
+		"test/data/sample.yaml",
+		"/tmp/test.yaml",
+		"/var/tmp/backup.yaml",
+		"C:/temp/config.yaml",
+		"D:/tmp/test.yaml",
+	}
+
+	for _, allowedPath := range allowedPaths {
+		t.Run("allowed_path_"+allowedPath, func(t *testing.T) {
+			// These should pass validation (though file may not exist)
+			_, err := updater.validateAndCleanFilePath(allowedPath)
+			if err != nil {
+				t.Errorf("validateAndCleanFilePath(%q) should allow safe path, got error: %v", allowedPath, err)
 			}
 		})
 	}

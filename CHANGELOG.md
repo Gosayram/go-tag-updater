@@ -46,18 +46,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added proper Windows drive letter detection and path normalization
   - Enhanced security by correctly blocking absolute paths outside safe directories on all platforms
   - Resolved test failures on Windows for path traversal security validation
+  - Fixed cyclomatic complexity by refactoring path validation into smaller, focused functions
+  - Resolved variable shadowing issue in path validation logic
+
+- **Enhanced Path Security System**: Comprehensive system directory protection
+  - Added blocking for Unix system paths: `/etc/`, `/usr/`, `/bin/`, `/sbin/` (both absolute and relative)
+  - Added blocking for Windows system paths: `System32`, `Program Files` with drive letter detection
+  - Enhanced relative path security to block patterns like `etc/passwd`, `usr/bin/bash`
+  - Created comprehensive test suite with 15+ malicious path patterns and 8+ allowed path patterns
+  - All path security checks now work consistently across Unix, Linux, macOS, and Windows platforms
 
 - **Code Quality Improvements**: Eliminated magic numbers and strings according to project standards
-  - Added comprehensive path security constants for cross-platform compatibility
+  - Added 24 comprehensive path security constants for cross-platform compatibility
   - Defined `PathTraversalPattern`, `WindowsDriveLetterSeparator`, and platform-specific path separators
   - Created safe directory prefix constants for Unix (`UnixTempDir`, `UnixVarTempDir`) and Windows (`WindowsCTempDir`, `WindowsCTmpDir`, etc.)
+  - Added system directory constants: `UnixEtcPath`, `UnixUsrPath`, `UnixBinPath`, `UnixSbinPath`, `WindowsSystemPath`, `WindowsProgramFilesPath`
   - Fixed linter warnings about exported constant comments to follow Go documentation standards
   - All path validation logic now uses named constants instead of magic strings
+  - Refactored complex function into three focused helper functions: `checkSuspiciousSystemPaths`, `checkWindowsSystemPaths`, `validateAbsolutePath`
 
 - **Linter Configuration**: Resolved golangci-lint compatibility issues
   - Removed unsupported `allow-havelen-0` parameter from ginkgolinter configuration
   - Updated golangci-lint installation paths in Makefile to use correct v1.x format
   - Fixed GitHub Actions workflow to use compatible golangci-lint version
+  - Resolved cyclomatic complexity warnings by function decomposition
+  - Fixed variable shadowing issues in path validation
   - All linter checks now pass without warnings across all supported platforms
 
 ### Technical Details

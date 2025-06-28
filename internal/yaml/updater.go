@@ -44,6 +44,21 @@ const (
 	WindowsDTempDir = "D:/temp/"
 	// WindowsDTmpDir defines the Windows D: drive tmp directory prefix
 	WindowsDTmpDir = "D:/tmp/"
+
+	// UnixEtcPath defines the Unix /etc directory path
+	UnixEtcPath = "/etc/"
+	// UnixUsrPath defines the Unix /usr directory path
+	UnixUsrPath = "/usr/"
+	// UnixVarPath defines the Unix /var directory path (except /var/tmp)
+	UnixVarPath = "/var/"
+	// UnixBinPath defines the Unix /bin directory path
+	UnixBinPath = "/bin/"
+	// UnixSbinPath defines the Unix /sbin directory path
+	UnixSbinPath = "/sbin/"
+	// WindowsSystemPath defines the Windows system directory path
+	WindowsSystemPath = "/windows/system32/"
+	// WindowsProgramFilesPath defines the Windows Program Files path
+	WindowsProgramFilesPath = "/program files/"
 )
 
 // Updater handles YAML file updates with backup and rollback capabilities
@@ -330,38 +345,111 @@ func (u *Updater) validateAndCleanFilePath(filePath string) (string, error) {
 		return "", errors.NewValidationError("file path contains invalid traversal patterns")
 	}
 
-	// Additional security checks for absolute paths (cross-platform)
+	// Normalize path for consistent checking (convert backslashes to forward slashes)
+	normalizedPath := strings.ReplaceAll(cleanPath, WindowsPathSeparator, UnixPathSeparator)
+	lowerPath := strings.ToLower(normalizedPath)
+
+	// Check for suspicious system paths
+	if err := u.checkSuspiciousSystemPaths(lowerPath); err != nil {
+		return "", err
+	}
+
+	// Check Windows-specific paths
+	if err := u.checkWindowsSystemPaths(lowerPath); err != nil {
+		return "", err
+	}
+
+	// Check absolute path permissions
 	if filepath.IsAbs(cleanPath) {
-		// Only allow absolute paths in specific safe directories
-		// For Unix-like systems: /tmp/, /var/tmp/
-		// For Windows: temp directories or explicitly allowed paths
-		allowedPrefixes := []string{
-			UnixTempDir,
-			UnixVarTempDir,
+		validatedPath, err := u.validateAbsolutePath(cleanPath, normalizedPath)
+		if err != nil {
+			return "", err
 		}
+		return validatedPath, nil
+	}
 
-		// Add Windows temp directory patterns
-		if strings.Contains(cleanPath, WindowsDriveLetterSeparator) { // Windows drive letter
-			// Convert to forward slashes for consistent checking
-			normalizedPath := strings.ReplaceAll(cleanPath, WindowsPathSeparator, UnixPathSeparator)
-			allowedPrefixes = append(allowedPrefixes,
-				WindowsCTempDir, WindowsCTmpDir,
-				WindowsDTempDir, WindowsDTmpDir,
-			)
-			cleanPath = normalizedPath
+	return cleanPath, nil
+}
+
+// checkSuspiciousSystemPaths checks for access to suspicious system directories
+func (u *Updater) checkSuspiciousSystemPaths(lowerPath string) error {
+	suspiciousPaths := []string{
+		UnixEtcPath,
+		UnixUsrPath,
+		UnixBinPath,
+		UnixSbinPath,
+		WindowsSystemPath,
+		WindowsProgramFilesPath,
+	}
+
+	for _, suspiciousPath := range suspiciousPaths {
+		suspiciousLower := strings.ToLower(suspiciousPath)
+		// Check if path starts with suspicious directory (absolute or relative)
+		if strings.HasPrefix(lowerPath, suspiciousLower) {
+			// Allow /var/tmp but block other /var paths
+			if suspiciousPath == UnixVarPath && strings.HasPrefix(lowerPath, strings.ToLower(UnixVarTempDir)) {
+				continue
+			}
+			return errors.NewValidationError("access to system directories is not allowed")
 		}
-
-		allowed := false
-		for _, prefix := range allowedPrefixes {
-			if strings.HasPrefix(strings.ToLower(cleanPath), strings.ToLower(prefix)) {
-				allowed = true
-				break
+		// Also check relative paths (without leading slash)
+		if suspiciousLower[0] == '/' {
+			relativeSuspicious := suspiciousLower[1:] // Remove leading slash
+			if strings.HasPrefix(lowerPath, relativeSuspicious) {
+				return errors.NewValidationError("access to system directories is not allowed")
 			}
 		}
+	}
+	return nil
+}
 
-		if !allowed {
-			return "", errors.NewValidationError("absolute file paths outside safe directories are not allowed")
+// checkWindowsSystemPaths checks for Windows-specific system directory access
+func (u *Updater) checkWindowsSystemPaths(lowerPath string) error {
+	if strings.Contains(lowerPath, ":") { // Windows drive letter path
+		// Block access to Windows system directories with drive letters
+		windowsSystemPaths := []string{
+			":/windows/system32/",
+			":/program files/",
+			":/program files (x86)/",
 		}
+		for _, winPath := range windowsSystemPaths {
+			if strings.Contains(lowerPath, winPath) {
+				return errors.NewValidationError("access to system directories is not allowed")
+			}
+		}
+	}
+	return nil
+}
+
+// validateAbsolutePath validates absolute paths and ensures they're in safe directories
+func (u *Updater) validateAbsolutePath(cleanPath, normalizedPath string) (string, error) {
+	// Only allow absolute paths in specific safe directories
+	// For Unix-like systems: /tmp/, /var/tmp/
+	// For Windows: temp directories or explicitly allowed paths
+	allowedPrefixes := []string{
+		UnixTempDir,
+		UnixVarTempDir,
+	}
+
+	// Add Windows temp directory patterns
+	if strings.Contains(cleanPath, WindowsDriveLetterSeparator) { // Windows drive letter
+		allowedPrefixes = append(allowedPrefixes,
+			WindowsCTempDir, WindowsCTmpDir,
+			WindowsDTempDir, WindowsDTmpDir,
+		)
+		cleanPath = normalizedPath
+	}
+
+	allowed := false
+	for _, prefix := range allowedPrefixes {
+		if strings.HasPrefix(strings.ToLower(cleanPath), strings.ToLower(prefix)) {
+			allowed = true
+			break
+		}
+	}
+
+	if !allowed {
+		return "", errors.NewValidationError("absolute file paths outside safe directories are not allowed")
 	}
 
 	return cleanPath, nil
