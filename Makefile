@@ -118,7 +118,9 @@ help:
 	@echo "  imports         - Format imports with goimports"
 	@echo "  lint            - Run golangci-lint"
 	@echo "  lint-fix        - Run linters with auto-fix"
+	@echo "  ginkgo-lint     - Run ginkgolinter specifically for Ginkgo/Gomega tests"
 	@echo "  staticcheck     - Run staticcheck static analyzer"
+	@echo "  staticcheck-only - Run staticcheck with enhanced configuration"
 	@echo "  errcheck        - Check for unchecked errors in Go code"
 	@echo "  security-scan   - Run gosec security scanner (SARIF output)"
 	@echo "  security-scan-json - Run gosec security scanner (JSON output)"
@@ -460,6 +462,36 @@ lint-fix:
 	@echo "Running linters with auto-fix..."
 	@$(GOLANGCI_LINT) run --fix
 	@echo "Auto-fix completed"
+
+# Run ginkgolinter specifically for Ginkgo/Gomega tests
+.PHONY: ginkgo-lint
+ginkgo-lint:
+	@echo "Running ginkgolinter for Ginkgo/Gomega test validation..."
+	@if command -v $(GOLANGCI_LINT) >/dev/null 2>&1; then \
+		$(GOLANGCI_LINT) run --enable-only=ginkgolinter ./...; \
+		echo "ginkgolinter completed!"; \
+	else \
+		echo "golangci-lint is not installed. Installing..."; \
+		go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest; \
+		echo "Running ginkgolinter..."; \
+		$(GOLANGCI_LINT) run --enable-only=ginkgolinter ./...; \
+		echo "ginkgolinter completed!"; \
+	fi
+
+# Run staticcheck with enhanced configuration
+.PHONY: staticcheck-only
+staticcheck-only:
+	@echo "Running staticcheck with enhanced configuration..."
+	@if command -v $(GOLANGCI_LINT) >/dev/null 2>&1; then \
+		$(GOLANGCI_LINT) run --enable-only=staticcheck ./...; \
+		echo "staticcheck completed!"; \
+	else \
+		echo "golangci-lint is not installed. Installing..."; \
+		go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest; \
+		echo "Running staticcheck..."; \
+		$(GOLANGCI_LINT) run --enable-only=staticcheck ./...; \
+		echo "staticcheck completed!"; \
+	fi
 
 # Security scanning with gosec
 .PHONY: security-scan security-scan-json security-scan-html security-install-gosec

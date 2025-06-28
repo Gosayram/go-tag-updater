@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	gitlab "gitlab.com/gitlab-org/api/client-go"
 
@@ -74,7 +73,8 @@ func (stu *SimpleTagUpdater) Initialize(_ context.Context) error {
 		return fmt.Errorf("failed to resolve project ID %s: %w", stu.config.ProjectID, err)
 	}
 
-	stu.logger.Infof("Resolved project ID: %s -> %d", stu.config.ProjectID, stu.projectID)
+	stu.logger.WithProjectID(stu.projectID).WithField("project_path", stu.config.ProjectID).
+		Info("Project ID resolved successfully")
 
 	// Initialize managers
 	stu.fileManager = gitlabapi.NewFileManager(client.GetGitLabClient(), stu.projectID)
@@ -86,7 +86,7 @@ func (stu *SimpleTagUpdater) Initialize(_ context.Context) error {
 		return fmt.Errorf("GitLab health check failed: %w", err)
 	}
 
-	stu.logger.Info("GitLab client initialized successfully")
+	stu.logger.WithOperation("health_check").Info("GitLab client initialized successfully")
 	return nil
 }
 
@@ -96,8 +96,12 @@ func (stu *SimpleTagUpdater) Execute(ctx context.Context) (*SimpleUpdateResult, 
 		Success: false,
 	}
 
-	stu.logger.Infof("Starting tag update: %s -> %s in %s",
-		stu.config.FilePath, stu.config.NewTag, stu.config.ProjectID)
+	stu.logger.WithFields(map[string]interface{}{
+		"file_path":  stu.config.FilePath,
+		"new_tag":    stu.config.NewTag,
+		"project_id": stu.config.ProjectID,
+		"operation":  "tag_update_start",
+	}).Info("Starting tag update workflow")
 
 	// Step 1: Validate file and get content
 	newContent, err := stu.validateAndUpdateContent(ctx)
@@ -121,125 +125,175 @@ func (stu *SimpleTagUpdater) Execute(ctx context.Context) (*SimpleUpdateResult, 
 	return stu.executeUpdate(ctx, result, newContent, branchName)
 }
 
-// updateYAMLContent updates YAML content using the proper parser
-func updateYAMLContent(content, newTag string, _ bool) (string, error) {
-	parser := yaml.NewParser()
-
-	// Try simple update first (most common case)
-	updatedContent, err := parser.UpdateTagSimple(content, newTag)
-	if err == nil {
-		return updatedContent, nil
-	}
-
-	// If simple update failed, try to find tag locations manually
-	parseResult, err := parser.ParseContent(content)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse YAML: %w", err)
-	}
-
-	tagLocations := parser.ListAllTags(parseResult)
-	if len(tagLocations) == 0 {
-		return "", errors.NewValidationError("no tag fields found in YAML content")
-	}
-
-	// Use the first detected tag location
-	updateOptions := &yaml.UpdateOptions{
-		TagPath:         tagLocations[0].Path,
-		NewValue:        newTag,
-		CreateIfMissing: false,
-	}
-
-	return parser.UpdateTag(parseResult, updateOptions)
-}
-
-// createTempFileWithContent creates a temporary file with given content for validation
-func createTempFileWithContent(content string) string {
-	tempFile := filepath.Join(os.TempDir(), "go-tag-updater-temp.yaml")
-	_ = os.WriteFile(tempFile, []byte(content), TempFilePermissions)
-	return tempFile
-}
-
-// minInt returns the minimum of two integers
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-// validateAndUpdateContent validates file and updates YAML content
+// validateAndUpdateContent validates the file exists and updates its content
 func (stu *SimpleTagUpdater) validateAndUpdateContent(ctx context.Context) (string, error) {
 	// Check if file exists
 	exists, err := stu.fileManager.FileExists(ctx, stu.config.FilePath, stu.config.TargetBranch)
 	if err != nil {
-		return "", fmt.Errorf("failed to check file existence: %w", err)
+		stu.logger.WithError(err).WithFields(map[string]interface{}{
+			"file_path": stu.config.FilePath,
+			"branch":    stu.config.TargetBranch,
+		}).Error("Failed to check file existence")
+		return "", fmt.Errorf("failed to check if file exists: %w", err)
 	}
 
 	if !exists {
-		return "", errors.NewFileNotFoundError(stu.config.FilePath)
+		stu.logger.WithFields(map[string]interface{}{
+			"file_path": stu.config.FilePath,
+			"branch":    stu.config.TargetBranch,
+		}).Error("File does not exist in target branch")
+		return "", fmt.Errorf("file %s does not exist in branch %s", stu.config.FilePath, stu.config.TargetBranch)
 	}
 
-	stu.logger.Infof("File %s exists in branch %s", stu.config.FilePath, stu.config.TargetBranch)
+	stu.logger.WithFields(map[string]interface{}{
+		"file_path": stu.config.FilePath,
+		"branch":    stu.config.TargetBranch,
+	}).Info("File exists in target branch")
 
 	// Get current file content
-	fileContent, err := stu.fileManager.GetFileContent(ctx, stu.config.FilePath, stu.config.TargetBranch)
+	content, err := stu.fileManager.GetFileContent(ctx, stu.config.FilePath, stu.config.TargetBranch)
 	if err != nil {
+		stu.logger.WithError(err).WithField("file_path", stu.config.FilePath).
+			Error("Failed to get file content")
 		return "", fmt.Errorf("failed to get file content: %w", err)
 	}
 
-	// Validate and update YAML content
+	// Update YAML content
+	newContent, err := stu.updateYAMLContent(content)
+	if err != nil {
+		stu.logger.WithError(err).WithField("file_path", stu.config.FilePath).
+			Error("Failed to update YAML content")
+		return "", fmt.Errorf("failed to update YAML content: %w", err)
+	}
+
+	stu.logger.WithFields(map[string]interface{}{
+		"file_path": stu.config.FilePath,
+		"new_tag":   stu.config.NewTag,
+	}).Info("YAML content updated successfully")
+
+	return newContent, nil
+}
+
+// updateYAMLContent updates YAML content using the proper parser
+func (stu *SimpleTagUpdater) updateYAMLContent(content string) (string, error) {
 	yamlUpdater := yaml.NewUpdater()
 
+	// Create temporary file with content for validation
+	tempFile, err := stu.createTempFileWithContent(content)
+	if err != nil {
+		return "", fmt.Errorf("failed to create temporary file: %w", err)
+	}
+	defer func() {
+		if removeErr := os.Remove(tempFile); removeErr != nil {
+			stu.logger.WithError(removeErr).WithField("temp_file", tempFile).
+				Warn("Failed to remove temporary file")
+		}
+	}()
+
 	// Validate the existing YAML
-	if validationErr := yamlUpdater.ValidateFile(createTempFileWithContent(fileContent)); validationErr != nil {
+	if validationErr := yamlUpdater.ValidateFile(tempFile); validationErr != nil {
 		return "", fmt.Errorf("invalid YAML in source file: %w", validationErr)
 	}
 
 	// Update the content
-	newContent, err := updateYAMLContent(fileContent, stu.config.NewTag, stu.config.DryRun)
-	if err != nil {
-		return "", fmt.Errorf("failed to update YAML content: %w", err)
+	request := &yaml.UpdateRequest{
+		FilePath:      tempFile,
+		NewTagValue:   stu.config.NewTag,
+		CreateBackup:  false,
+		ValidateAfter: true,
+		DryRun:        true, // We only want the updated content, not to write it
 	}
 
-	stu.logger.Infof("YAML content updated successfully")
+	result, err := yamlUpdater.UpdateTagInFile(request)
+	if err != nil {
+		return "", fmt.Errorf("failed to update YAML tag: %w", err)
+	}
+
+	if !result.Success {
+		return "", fmt.Errorf("YAML update was not successful")
+	}
+
+	newContent := result.UpdatedContent
+
 	return newContent, nil
+}
+
+// createTempFileWithContent creates a temporary file with given content
+func (stu *SimpleTagUpdater) createTempFileWithContent(content string) (string, error) {
+	// Create temp file in current directory to avoid YAML validator path restrictions
+	tempFile, err := os.CreateTemp(".", "go-tag-updater-*.yaml")
+	if err != nil {
+		return "", err
+	}
+	defer tempFile.Close()
+
+	if _, err := tempFile.WriteString(content); err != nil {
+		_ = os.Remove(tempFile.Name()) // Ignore cleanup error, return original write error
+		return "", err
+	}
+
+	return tempFile.Name(), nil
 }
 
 // prepareBranchName generates a unique branch name
 func (stu *SimpleTagUpdater) prepareBranchName(ctx context.Context) (string, error) {
-	branchName := stu.config.BranchName
-	if branchName == "" {
+	var branchName string
+	if stu.config.BranchName != "" {
+		branchName = stu.config.BranchName
+	} else {
 		var err error
-		branchName, err = stu.branchMgr.GenerateUniqueBranchName(ctx, "update-tag/", stu.config.NewTag)
+		branchName, err = stu.branchMgr.GenerateUniqueBranchName(ctx, "update-tag", stu.config.NewTag)
 		if err != nil {
 			return "", fmt.Errorf("failed to generate branch name: %w", err)
 		}
 	}
 
-	stu.logger.Infof("Using branch name: %s", branchName)
+	stu.logger.WithFields(map[string]interface{}{
+		"branch_name":    branchName,
+		"auto_generated": stu.config.BranchName == "",
+	}).Info("Branch name prepared")
+
 	return branchName, nil
 }
 
-// handleDryRun handles dry run mode execution
+// handleDryRun handles dry run mode
 func (stu *SimpleTagUpdater) handleDryRun(result *SimpleUpdateResult, newContent string) *SimpleUpdateResult {
-	stu.logger.Info("Dry run mode: would create branch and update file")
 	maxLen := minInt(PreviewContentMaxLength, len(newContent))
-	stu.logger.Infof("Content preview:\n%s", newContent[:maxLen])
+
+	stu.logger.WithFields(map[string]interface{}{
+		"operation":      "dry_run",
+		"branch_name":    result.BranchName,
+		"content_length": len(newContent),
+		"preview_length": maxLen,
+	}).Info("Dry run mode: would create branch and update file")
+
+	stu.logger.WithField("content_preview", newContent[:maxLen]).Debug("Content preview")
+
 	result.Success = true
 	result.Message = "Dry run completed successfully"
 	return result
 }
 
 // executeUpdate performs the actual update operations
-func (stu *SimpleTagUpdater) executeUpdate(ctx context.Context, result *SimpleUpdateResult,
-	newContent, branchName string) (*SimpleUpdateResult, error) {
+func (stu *SimpleTagUpdater) executeUpdate(
+	ctx context.Context,
+	result *SimpleUpdateResult,
+	newContent, branchName string,
+) (*SimpleUpdateResult, error) {
 	// Create branch
 	_, err := stu.branchMgr.CreateBranch(ctx, branchName, stu.config.TargetBranch)
 	if err != nil {
+		stu.logger.WithError(err).WithFields(map[string]interface{}{
+			"branch_name":   branchName,
+			"source_branch": stu.config.TargetBranch,
+		}).Error("Failed to create branch")
 		return result, fmt.Errorf("failed to create branch %s: %w", branchName, err)
 	}
 
-	stu.logger.Infof("Created branch: %s", branchName)
+	stu.logger.WithFields(map[string]interface{}{
+		"branch_name":   branchName,
+		"source_branch": stu.config.TargetBranch,
+	}).Info("Branch created successfully")
 
 	// Update file with new content
 	updateOpts := &gitlabapi.FileUpdateOptions{
@@ -252,11 +306,19 @@ func (stu *SimpleTagUpdater) executeUpdate(ctx context.Context, result *SimpleUp
 	if err != nil {
 		// Try to cleanup branch on failure
 		_ = stu.branchMgr.DeleteBranch(ctx, branchName)
+		stu.logger.WithError(err).WithFields(map[string]interface{}{
+			"file_path":   stu.config.FilePath,
+			"branch_name": branchName,
+		}).Error("Failed to update file, branch cleaned up")
 		return result, fmt.Errorf("failed to update file: %w", err)
 	}
 
 	result.FileUpdated = true
-	stu.logger.Infof("Updated file %s with tag %s", stu.config.FilePath, stu.config.NewTag)
+	stu.logger.WithFields(map[string]interface{}{
+		"file_path":   stu.config.FilePath,
+		"branch_name": branchName,
+		"new_tag":     stu.config.NewTag,
+	}).Info("File updated successfully")
 
 	// Create merge request
 	mrDescription := fmt.Sprintf("Automated tag update to %s\n\nFile: %s\nBranch: %s",
@@ -270,11 +332,19 @@ func (stu *SimpleTagUpdater) executeUpdate(ctx context.Context, result *SimpleUp
 
 	mr, err := stu.mrManager.CreateMergeRequest(ctx, mrOpts)
 	if err != nil {
+		stu.logger.WithError(err).WithFields(map[string]interface{}{
+			"branch_name":   branchName,
+			"target_branch": stu.config.TargetBranch,
+		}).Error("Failed to create merge request")
 		return result, fmt.Errorf("failed to create merge request: %w", err)
 	}
 
 	result.MergeRequest = mr
-	stu.logger.Infof("Created merge request: !%d - %s", mr.IID, mr.WebURL)
+	stu.logger.WithFields(map[string]interface{}{
+		"mr_id":       mr.IID,
+		"mr_url":      mr.WebURL,
+		"branch_name": branchName,
+	}).Info("Merge request created successfully")
 
 	result.Success = true
 	result.Message = fmt.Sprintf("Tag update completed successfully. MR: !%d", mr.IID)
@@ -285,4 +355,12 @@ func (stu *SimpleTagUpdater) executeUpdate(ctx context.Context, result *SimpleUp
 func (stu *SimpleTagUpdater) Cleanup() error {
 	// Currently no cleanup needed
 	return nil
+}
+
+// minInt returns the minimum of two integers
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

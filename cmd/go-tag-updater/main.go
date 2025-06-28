@@ -4,8 +4,6 @@ package main
 import (
 	"fmt"
 	"os"
-
-	"github.com/Gosayram/go-tag-updater/pkg/errors"
 )
 
 const (
@@ -17,13 +15,6 @@ const (
 
 func main() {
 	if err := rootCmd.Execute(); err != nil {
-		if appErr, ok := err.(*errors.AppError); ok {
-			fmt.Fprintf(os.Stderr, "Error [%s]: %s\n", appErr.Category, appErr.Message)
-			if appErr.Context != "" {
-				fmt.Fprintf(os.Stderr, "Context: %s\n", appErr.Context)
-			}
-			os.Exit(appErr.Code)
-		}
 		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 		os.Exit(ExitCodeError)
 	}

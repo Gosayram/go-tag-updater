@@ -126,11 +126,15 @@ func runCommand(_ *cobra.Command, _ []string) error {
 	// Initialize logger
 	log := logger.New(cfg.Debug)
 
-	log.Infof("Starting go-tag-updater with file=%s, tag=%s, project=%s",
-		cfg.FilePath, cfg.NewTag, cfg.ProjectID)
+	log.WithFields(map[string]interface{}{
+		"file_path":  cfg.FilePath,
+		"new_tag":    cfg.NewTag,
+		"project_id": cfg.ProjectID,
+		"operation":  "cli_start",
+	}).Info("Starting go-tag-updater")
 
 	if cfg.DryRun {
-		log.Info("Dry run mode - no changes will be made")
+		log.WithField("mode", "dry_run").Info("Dry run mode enabled - no changes will be made")
 	}
 
 	// Validate inputs (additional validation)
@@ -150,23 +154,26 @@ func runCommand(_ *cobra.Command, _ []string) error {
 		return errors.NewValidationError("GitLab token cannot be empty")
 	}
 
-	log.Info("Configuration validated successfully")
+	log.WithOperation("validation").Info("Configuration validated successfully")
 
 	// Execute workflow - just report what would be done for now
-	log.Infof("Would update file: %s", cfg.FilePath)
-	log.Infof("Would set tag to: %s", cfg.NewTag)
-	log.Infof("Target project: %s", cfg.ProjectID)
-	log.Infof("Target branch: %s", cfg.TargetBranch)
+	log.WithFields(map[string]interface{}{
+		"file_path":     cfg.FilePath,
+		"new_tag":       cfg.NewTag,
+		"project_id":    cfg.ProjectID,
+		"target_branch": cfg.TargetBranch,
+		"operation":     "preview",
+	}).Info("Workflow preview")
 
 	if cfg.AutoMerge {
-		log.Info("Auto-merge would be enabled")
+		log.WithField("auto_merge", true).Info("Auto-merge would be enabled")
 	}
 
 	if cfg.WaitForPreviousMR {
-		log.Info("Would wait for previous merge requests")
+		log.WithField("wait_previous_mr", true).Info("Would wait for previous merge requests")
 	}
 
-	log.Info("Tag update process completed successfully")
+	log.WithOperation("cli_complete").Info("Tag update process completed successfully")
 
 	return nil
 }
