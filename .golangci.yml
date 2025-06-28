@@ -49,7 +49,6 @@ linters:
       suppress-compare-assertion: false
       suppress-async-assertion: false
       suppress-type-compare-assertion: false
-      allow-havelen-0: false
     gocognit:
       min-complexity: 20
     goconst:
