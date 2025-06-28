@@ -271,6 +271,24 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@3454372f43399081ed03b604cb2d021dabca52bb # v3.8.2
+        with:
+          cosign-release: 'v2.4.3'
+
+      - name: Generate public key
+        env:
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+        run: |
+          # Create temporary private key file from secret
+          echo "${{ secrets.COSIGN_PRIVATE_KEY }}" > cosign.key
+
+          # Generate public key from private key
+          cosign public-key --key cosign.key > cosign.pub
+
+          # Clean up private key file
+          rm -f cosign.key
+
       - name: Get version
         id: version
         run: |
@@ -356,6 +374,7 @@ jobs:
           body_path: changelog.md
           files: |
             ./artifacts/**/*
+            cosign.pub
           draft: false
           prerelease: false
         env:

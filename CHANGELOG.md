@@ -48,6 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Resolved test failures on Windows for path traversal security validation
   - Fixed cyclomatic complexity by refactoring path validation into smaller, focused functions
   - Resolved variable shadowing issue in path validation logic
+  - Fixed Windows file permissions test to handle filesystem differences correctly
 
 - **Enhanced Path Security System**: Comprehensive system directory protection
   - Added blocking for Unix system paths: `/etc/`, `/usr/`, `/bin/`, `/sbin/` (both absolute and relative)
@@ -55,6 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Enhanced relative path security to block patterns like `etc/passwd`, `usr/bin/bash`
   - Created comprehensive test suite with 15+ malicious path patterns and 8+ allowed path patterns
   - All path security checks now work consistently across Unix, Linux, macOS, and Windows platforms
+  - Fixed cross-platform file permissions testing to handle Windows filesystem differences (0o600 vs 0o666)
 
 - **Code Quality Improvements**: Eliminated magic numbers and strings according to project standards
   - Added 24 comprehensive path security constants for cross-platform compatibility
