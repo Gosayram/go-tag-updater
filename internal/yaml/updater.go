@@ -22,6 +22,28 @@ const (
 	MaxBackupFiles = 5
 	// BackupDirPermissions defines the permissions for backup directories
 	BackupDirPermissions = 0o750
+
+	// PathTraversalPattern defines the pattern used to detect path traversal attacks
+	PathTraversalPattern = ".."
+	// WindowsDriveLetterSeparator defines the separator used in Windows drive letters
+	WindowsDriveLetterSeparator = ":"
+	// WindowsPathSeparator defines the Windows path separator
+	WindowsPathSeparator = "\\"
+	// UnixPathSeparator defines the Unix path separator
+	UnixPathSeparator = "/"
+
+	// UnixTempDir defines the Unix temporary directory prefix
+	UnixTempDir = "/tmp/"
+	// UnixVarTempDir defines the Unix variable temporary directory prefix
+	UnixVarTempDir = "/var/tmp/"
+	// WindowsCTempDir defines the Windows C: drive temporary directory prefix
+	WindowsCTempDir = "C:/temp/"
+	// WindowsCTmpDir defines the Windows C: drive tmp directory prefix
+	WindowsCTmpDir = "C:/tmp/"
+	// WindowsDTempDir defines the Windows D: drive temporary directory prefix
+	WindowsDTempDir = "D:/temp/"
+	// WindowsDTmpDir defines the Windows D: drive tmp directory prefix
+	WindowsDTmpDir = "D:/tmp/"
 )
 
 // Updater handles YAML file updates with backup and rollback capabilities
@@ -304,15 +326,42 @@ func (u *Updater) validateAndCleanFilePath(filePath string) (string, error) {
 	cleanPath := filepath.Clean(filePath)
 
 	// Check for suspicious patterns that could indicate path traversal
-	if strings.Contains(cleanPath, "..") {
+	if strings.Contains(cleanPath, PathTraversalPattern) {
 		return "", errors.NewValidationError("file path contains invalid traversal patterns")
 	}
 
-	// Additional security checks
-	if strings.HasPrefix(cleanPath, "/") && !strings.HasPrefix(cleanPath, "/tmp/") {
-		// Only allow absolute paths in specific safe directories like /tmp
-		// In production, you might want to configure allowed directories
-		return "", errors.NewValidationError("absolute file paths outside safe directories are not allowed")
+	// Additional security checks for absolute paths (cross-platform)
+	if filepath.IsAbs(cleanPath) {
+		// Only allow absolute paths in specific safe directories
+		// For Unix-like systems: /tmp/, /var/tmp/
+		// For Windows: temp directories or explicitly allowed paths
+		allowedPrefixes := []string{
+			UnixTempDir,
+			UnixVarTempDir,
+		}
+
+		// Add Windows temp directory patterns
+		if strings.Contains(cleanPath, WindowsDriveLetterSeparator) { // Windows drive letter
+			// Convert to forward slashes for consistent checking
+			normalizedPath := strings.ReplaceAll(cleanPath, WindowsPathSeparator, UnixPathSeparator)
+			allowedPrefixes = append(allowedPrefixes,
+				WindowsCTempDir, WindowsCTmpDir,
+				WindowsDTempDir, WindowsDTmpDir,
+			)
+			cleanPath = normalizedPath
+		}
+
+		allowed := false
+		for _, prefix := range allowedPrefixes {
+			if strings.HasPrefix(strings.ToLower(cleanPath), strings.ToLower(prefix)) {
+				allowed = true
+				break
+			}
+		}
+
+		if !allowed {
+			return "", errors.NewValidationError("absolute file paths outside safe directories are not allowed")
+		}
 	}
 
 	return cleanPath, nil
