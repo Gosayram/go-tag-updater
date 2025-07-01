@@ -360,8 +360,7 @@ jobs:
           echo "" >> changelog.md
           echo "# Verify Cosign signature (requires cosign CLI)" >> changelog.md
           echo "cosign verify-blob \\\\" >> changelog.md
-          echo "  --certificate-identity \"https://github.com/Gosayram/go-tag-updater/.github/workflows/release.yml@refs/tags/${{ env.VERSION }}\" \\\\" >> changelog.md
-          echo "  --certificate-oidc-issuer \"https://token.actions.githubusercontent.com\" \\\\" >> changelog.md
+          echo "  --key cosign.pub \\\\" >> changelog.md
           echo "  --signature go-tag-updater-*-linux-amd64.sig \\\\" >> changelog.md
           echo "  go-tag-updater-*-linux-amd64" >> changelog.md
           echo '```' >> changelog.md
