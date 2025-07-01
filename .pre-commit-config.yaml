@@ -89,12 +89,7 @@ repos:
         exclude: ^(go\.sum|\.secrets\.baseline)$
 
   # Custom commit message validation
-  - repo: local
+  - repo: https://github.com/Gosayram/commit-mgmt
+    rev: v1.0.2
     hooks:
-      - id: custom-commit-msg
-        name: Custom Commit Format
-        description: Ensure commit messages follow project format [TYPE] - description
-        entry: scripts/check-commit-msg.sh
-        language: script
-        stages: [commit-msg]
-        pass_filenames: true
+      - id: commit-msg-format
